@@ -258,4 +258,4 @@ The full protocol specification is in [spec.md](spec.md). It covers:
 
 ## License
 
-TBD
+MIT — see [LICENSE](LICENSE).
