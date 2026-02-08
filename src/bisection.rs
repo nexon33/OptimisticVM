@@ -1,7 +1,8 @@
 use crate::error::{OvpError, Result};
-use crate::hash::hash_data;
+use crate::hash::{hash_data, hash_transition};
+use crate::merkle::verify_proof;
 use crate::transition::StepFunction;
-use crate::types::{DisputeOutcome, Hash};
+use crate::types::{DisputeOutcome, Hash, MerkleProof};
 
 /// Phase of the bisection dispute protocol.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +25,8 @@ pub struct BisectionDispute {
     /// Midpoint index (valid when phase = WaitingChallengerChoice)
     midpoint_index: u64,
     midpoint_hash: Hash,
+    /// Optional commitment root for Merkle proof binding at final step.
+    commitment_root: Option<Hash>,
 }
 
 impl BisectionDispute {
@@ -51,7 +54,24 @@ impl BisectionDispute {
             rounds: 0,
             midpoint_index: 0,
             midpoint_hash: [0; 32],
+            commitment_root: None,
         })
+    }
+
+    /// Create a bisection dispute bound to a Merkle commitment.
+    ///
+    /// When a commitment root is provided, `defender_prove_step` requires
+    /// a valid Merkle proof that binds the disputed step to the commitment.
+    pub fn new_with_commitment(
+        left_index: u64,
+        right_index: u64,
+        left_hash: Hash,
+        right_hash: Hash,
+        commitment_root: Hash,
+    ) -> Result<Self> {
+        let mut dispute = Self::new(left_index, right_index, left_hash, right_hash)?;
+        dispute.commitment_root = Some(commitment_root);
+        Ok(dispute)
     }
 
     /// Defender reveals the hash at the midpoint.
@@ -104,11 +124,15 @@ impl BisectionDispute {
     ///
     /// The defender provides the state at left_index and the inputs.
     /// Re-execution determines the outcome.
+    ///
+    /// If the dispute was created with `new_with_commitment`, a `merkle_proof`
+    /// must be provided to bind the step to the committed Merkle tree.
     pub fn defender_prove_step(
         &mut self,
         previous_state: &[u8],
         inputs: &[u8],
         step_fn: &dyn StepFunction,
+        merkle_proof: Option<&MerkleProof>,
     ) -> Result<DisputeOutcome> {
         if self.phase != BisectionPhase::WaitingDefenderProof {
             return Err(OvpError::InvalidDisputePhase {
@@ -117,7 +141,7 @@ impl BisectionDispute {
             });
         }
 
-        // Step 2: Verify previous state matches left_hash
+        // Step 1: Verify previous state matches left_hash
         let prev_hash = hash_data(previous_state);
         if prev_hash != self.left_hash {
             let outcome = DisputeOutcome::ChallengerWins {
@@ -127,11 +151,49 @@ impl BisectionDispute {
             return Ok(outcome);
         }
 
-        // Step 3: Re-execute
+        // Step 2: Re-execute
         let computed_output = step_fn.execute(previous_state, inputs);
         let computed_hash = hash_data(&computed_output);
 
-        // Step 4: Compare
+        // Step 3: If commitment-bound, verify Merkle proof binds this step
+        if let Some(root) = self.commitment_root {
+            let proof = merkle_proof.ok_or_else(|| {
+                OvpError::InvalidProof(
+                    "commitment-bound dispute requires a merkle proof".to_string(),
+                )
+            })?;
+
+            if !verify_proof(proof) {
+                let outcome = DisputeOutcome::ChallengerWins {
+                    reason: "invalid merkle proof for disputed step".to_string(),
+                };
+                self.phase = BisectionPhase::Resolved(outcome.clone());
+                return Ok(outcome);
+            }
+
+            if proof.root != root {
+                let outcome = DisputeOutcome::ChallengerWins {
+                    reason: "merkle proof root doesn't match commitment".to_string(),
+                };
+                self.phase = BisectionPhase::Resolved(outcome.clone());
+                return Ok(outcome);
+            }
+
+            // The Merkle leaf should be hash_transition(prev, input, claimed_output)
+            // where claimed_output is what the prover committed to (self.right_hash).
+            let input_hash = hash_data(inputs);
+            let expected_leaf =
+                hash_transition(&self.left_hash, &input_hash, &self.right_hash);
+            if proof.leaf != expected_leaf {
+                let outcome = DisputeOutcome::ChallengerWins {
+                    reason: "step does not match committed transition hash".to_string(),
+                };
+                self.phase = BisectionPhase::Resolved(outcome.clone());
+                return Ok(outcome);
+            }
+        }
+
+        // Step 4: Compare re-execution result to claimed output
         let outcome = if computed_hash == self.right_hash {
             DisputeOutcome::DefenderWins
         } else {
@@ -221,7 +283,7 @@ mod tests {
 
         // Defender proves step 5 → 6
         let outcome = dispute
-            .defender_prove_step(&states[5], &[], &increment_step)
+            .defender_prove_step(&states[5], &[], &increment_step, None)
             .unwrap();
 
         assert_eq!(outcome, DisputeOutcome::DefenderWins);
@@ -251,7 +313,7 @@ mod tests {
         // Defender tries to prove step 5 → 6
         // But hashes[6] was corrupted, so re-execution won't match
         let outcome = dispute
-            .defender_prove_step(&states[5], &[], &increment_step)
+            .defender_prove_step(&states[5], &[], &increment_step, None)
             .unwrap();
 
         match outcome {
@@ -319,7 +381,7 @@ mod tests {
         // Defender provides wrong previous state
         let wrong_state = vec![0xFF; 4];
         let outcome = dispute
-            .defender_prove_step(&wrong_state, &[], &increment_step)
+            .defender_prove_step(&wrong_state, &[], &increment_step, None)
             .unwrap();
 
         match outcome {
@@ -328,5 +390,76 @@ mod tests {
             }
             _ => panic!("challenger should win"),
         }
+    }
+
+    #[test]
+    fn test_bisection_commitment_bound_honest_defender() {
+        use crate::commitment::create_commitment;
+        use crate::hash::hash_transition;
+
+        let initial = vec![0x00u8; 4];
+        let (hashes, states) = build_honest_hashes(&initial);
+
+        // Build transition-hash checkpoints for Merkle commitment
+        let mut checkpoints = Vec::new();
+        for i in 0..8 {
+            let prev_h = hash_data(&states[i]);
+            let input_h = hash_data(&[]); // increment_step ignores inputs
+            let next_h = hash_data(&states[i + 1]);
+            checkpoints.push(hash_transition(&prev_h, &input_h, &next_h));
+        }
+
+        let wasm_hash = hash_data(b"increment_step");
+        let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
+
+        // Dispute range [0, 8] — commitment-bound
+        let mut dispute = BisectionDispute::new_with_commitment(
+            0,
+            8,
+            hashes[0],
+            hashes[8],
+            commitment.root,
+        )
+        .unwrap();
+
+        // Bisect to [5, 6]
+        dispute.defender_reveal_midpoint(hashes[4]).unwrap();
+        dispute.challenger_choose_half(true).unwrap();
+        dispute.defender_reveal_midpoint(hashes[6]).unwrap();
+        dispute.challenger_choose_half(false).unwrap();
+        dispute.defender_reveal_midpoint(hashes[5]).unwrap();
+        dispute.challenger_choose_half(true).unwrap();
+
+        assert_eq!(dispute.phase, BisectionPhase::WaitingDefenderProof);
+
+        // Defender provides Merkle proof for step 5
+        let merkle_proof = tree.generate_proof(5, &wasm_hash).unwrap();
+        let outcome = dispute
+            .defender_prove_step(&states[5], &[], &increment_step, Some(&merkle_proof))
+            .unwrap();
+
+        assert_eq!(outcome, DisputeOutcome::DefenderWins);
+    }
+
+    #[test]
+    fn test_bisection_commitment_bound_rejects_missing_proof() {
+        let initial = vec![0x00u8; 4];
+        let (hashes, states) = build_honest_hashes(&initial);
+
+        let mut dispute = BisectionDispute::new_with_commitment(
+            0,
+            2,
+            hashes[0],
+            hashes[2],
+            hash_data(b"some_root"),
+        )
+        .unwrap();
+
+        dispute.defender_reveal_midpoint(hashes[1]).unwrap();
+        dispute.challenger_choose_half(true).unwrap();
+
+        // Commitment-bound dispute without Merkle proof should error
+        let result = dispute.defender_prove_step(&states[1], &[], &increment_step, None);
+        assert!(result.is_err());
     }
 }

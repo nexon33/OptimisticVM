@@ -132,7 +132,7 @@ fn bench_merkle_prove(c: &mut Criterion) {
         let tree = MerkleTree::build(&leaves);
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &tree, |b, tree| {
-            b.iter(|| tree.generate_proof(black_box(0)))
+            b.iter(|| tree.generate_proof(black_box(0), &ZERO_HASH))
         });
     }
 
@@ -145,7 +145,7 @@ fn bench_merkle_verify(c: &mut Criterion) {
     for &n in &[32, 100, 1000, 10_000] {
         let leaves: Vec<Hash> = (0..n).map(|i| hash_data(&(i as u32).to_le_bytes())).collect();
         let tree = MerkleTree::build(&leaves);
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0, &ZERO_HASH).unwrap();
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &proof, |b, proof| {
             b.iter(|| verify_proof(black_box(proof)))
@@ -201,7 +201,7 @@ fn bench_transition(c: &mut Criterion) {
 
     let (states, inputs, checkpoints) = build_checkpoints(100);
     let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
-    let merkle_proof = tree.generate_proof(0).unwrap();
+    let merkle_proof = tree.generate_proof(0, &ZERO_HASH).unwrap();
 
     let tp = TransitionProof {
         merkle_proof,
@@ -231,7 +231,7 @@ fn bench_fraud(c: &mut Criterion) {
     let (states, inputs, mut checkpoints) = build_checkpoints(100);
     checkpoints[50] = hash_data(b"bad"); // corrupt checkpoint 50
     let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
-    let proof = tree.generate_proof(50).unwrap();
+    let proof = tree.generate_proof(50, &ZERO_HASH).unwrap();
 
     group.bench_function("generate", |b| {
         b.iter(|| {
@@ -309,7 +309,7 @@ fn bench_bisection(c: &mut Criterion) {
                     }
 
                     dispute
-                        .defender_prove_step(&states[dispute.left_index as usize], &[], &increment_step)
+                        .defender_prove_step(&states[dispute.left_index as usize], &[], &increment_step, None)
                         .unwrap()
                 })
             },
@@ -393,7 +393,7 @@ fn bench_serialization(c: &mut Criterion) {
     // MerkleProof (100 leaves, proof for index 0)
     let leaves: Vec<Hash> = (0..100).map(|i| hash_data(&(i as u32).to_le_bytes())).collect();
     let tree = MerkleTree::build(&leaves);
-    let proof = tree.generate_proof(0).unwrap();
+    let proof = tree.generate_proof(0, &ZERO_HASH).unwrap();
 
     group.bench_function("merkle_proof/to_bytes", |b| {
         b.iter(|| black_box(&proof).to_bytes())
@@ -456,7 +456,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                 let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
                 b.iter(|| {
                     for i in 0..n as u64 {
-                        let proof = tree.generate_proof(i).unwrap();
+                        let proof = tree.generate_proof(i, &wasm_hash).unwrap();
                         assert!(verify_proof(&proof));
                         assert_eq!(proof.root, commitment.root);
                     }

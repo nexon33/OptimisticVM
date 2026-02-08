@@ -119,7 +119,7 @@ mod tests {
         let (commitment, tree, states, inputs, _) = build_transition_scenario();
 
         // Verify transition at index 0 (first step)
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0, &commitment.wasm_hash).unwrap();
         let prev = &states[0];
         let inp = &inputs[0];
         let next = &states[1];
@@ -142,7 +142,7 @@ mod tests {
     fn test_verify_transition_fraud() {
         let (commitment, tree, states, inputs, _) = build_transition_scenario();
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0, &commitment.wasm_hash).unwrap();
         let prev = &states[0];
         let inp = &inputs[0];
 

@@ -1,5 +1,5 @@
 use crate::error::{OvpError, Result};
-use crate::hash::hash_data;
+use crate::hash::{hash_data, hash_transition};
 use crate::merkle::verify_proof;
 use crate::transition::StepFunction;
 use crate::types::{Commitment, FraudProof, FraudResult, MerkleProof};
@@ -25,12 +25,17 @@ pub fn generate_fraud_proof(
         return Err(OvpError::RootMismatch);
     }
 
-    // Re-execute
+    // Re-execute and reconstruct the transition hash
     let previous_hash = hash_data(previous_state);
+    let input_hash = hash_data(inputs);
     let new_state = step_fn.execute(previous_state, inputs);
-    let computed_hash = hash_data(&new_state);
+    let computed_state_hash = hash_data(&new_state);
 
-    // The claimed hash is the Merkle leaf
+    // The Merkle leaf is a transition hash: hash_transition(prev, input, claimed_output).
+    // Reconstruct what the transition hash SHOULD be from honest re-execution.
+    let computed_hash = hash_transition(&previous_hash, &input_hash, &computed_state_hash);
+
+    // The claimed transition hash is the Merkle leaf
     let claimed_hash = merkle_proof.leaf;
 
     if computed_hash != claimed_hash {
@@ -73,9 +78,12 @@ pub fn validate_fraud_proof(
         return Err(OvpError::RootMismatch);
     }
 
-    // 3. Re-execute to confirm the fraud
+    // 3. Re-execute and reconstruct transition hash to confirm the fraud
+    let previous_hash = hash_data(&fraud_proof.previous_state);
+    let input_hash = hash_data(&fraud_proof.inputs);
     let new_state = step_fn.execute(&fraud_proof.previous_state, &fraud_proof.inputs);
-    let recomputed = hash_data(&new_state);
+    let computed_state_hash = hash_data(&new_state);
+    let recomputed = hash_transition(&previous_hash, &input_hash, &computed_state_hash);
 
     if recomputed != fraud_proof.computed_hash {
         return Err(OvpError::InvalidProof(
@@ -125,7 +133,7 @@ mod tests {
 
         let wasm_hash = hash_data(b"xor_step");
         let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
-        let proof = tree.generate_proof(2).unwrap();
+        let proof = tree.generate_proof(2, &wasm_hash).unwrap();
 
         // The honest challenger re-executes step 2
         let result = generate_fraud_proof(
@@ -161,19 +169,19 @@ mod tests {
         for input in &step_inputs {
             let prev = states.last().unwrap();
             let next = xor_step(prev, input);
-            // Here we use the raw state hash as the leaf (not transition hash)
-            // to test the NoFraud path: when the leaf IS the computed hash
-            let leaf = hash_data(&next);
-            checkpoints.push(leaf);
+            let prev_h = hash_data(prev);
+            let input_h = hash_data(input);
+            let next_h = hash_data(&next);
+            checkpoints.push(hash_transition(&prev_h, &input_h, &next_h));
             states.push(next);
         }
 
         let wasm_hash = hash_data(b"xor_step");
         let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0, &wasm_hash).unwrap();
 
-        // The leaf is hash_data(state_1), and step_fn(state_0, input_0) = state_1,
-        // so hash_data(step_fn(...)) should equal the leaf.
+        // The leaf is hash_transition(prev, input, next) and re-execution produces
+        // the same transition hash, so no fraud should be detected.
         let result = generate_fraud_proof(
             &commitment,
             0,

@@ -289,7 +289,7 @@ pub fn verify_batch(batch_json: &str) -> String {
     let wasm_hash = hash_data(b"clicker-verifier-v1");
     let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
 
-    let merkle_proof = match tree.generate_proof(fraud_i as u64) {
+    let merkle_proof = match tree.generate_proof(fraud_i as u64, &wasm_hash) {
         Ok(p) => p,
         Err(e) => {
             return error_result(&format!("Merkle proof generation failed: {}", e));

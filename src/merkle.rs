@@ -49,7 +49,9 @@ impl MerkleTree {
     }
 
     /// Generate a Merkle inclusion proof for the leaf at `leaf_index`.
-    pub fn generate_proof(&self, leaf_index: u64) -> Result<MerkleProof> {
+    ///
+    /// The `wasm_hash` binds this proof to the code that produced the computation.
+    pub fn generate_proof(&self, leaf_index: u64, wasm_hash: &Hash) -> Result<MerkleProof> {
         let leaf_idx = leaf_index as usize;
         let leaves = &self.layers[0];
 
@@ -95,7 +97,7 @@ impl MerkleTree {
             leaf_index,
             siblings,
             root: self.root,
-            wasm_hash: ZERO_HASH, // set by caller
+            wasm_hash: *wasm_hash,
         })
     }
 }
@@ -156,7 +158,7 @@ mod tests {
     fn test_proof_index_2() {
         let leaves = make_4_leaves();
         let tree = MerkleTree::build(&leaves);
-        let proof = tree.generate_proof(2).unwrap();
+        let proof = tree.generate_proof(2, &ZERO_HASH).unwrap();
 
         assert_eq!(proof.leaf, leaves[2]);
         assert_eq!(proof.leaf_index, 2);
@@ -182,7 +184,7 @@ mod tests {
         let tree = MerkleTree::build(&leaves);
 
         for i in 0..4 {
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = tree.generate_proof(i, &ZERO_HASH).unwrap();
             assert!(verify_proof(&proof), "proof failed for index {i}");
         }
     }
@@ -196,7 +198,7 @@ mod tests {
         assert_eq!(tree.layers.len(), 1);
         assert_eq!(tree.root, leaf);
 
-        let proof = tree.generate_proof(0).unwrap();
+        let proof = tree.generate_proof(0, &ZERO_HASH).unwrap();
         assert_eq!(proof.siblings.len(), 0);
         assert!(verify_proof(&proof));
     }
@@ -218,7 +220,7 @@ mod tests {
 
         // All proofs verify
         for i in 0..3 {
-            let proof = tree.generate_proof(i).unwrap();
+            let proof = tree.generate_proof(i, &ZERO_HASH).unwrap();
             assert!(verify_proof(&proof), "proof failed for index {i}");
         }
     }
@@ -235,7 +237,7 @@ mod tests {
     fn test_proof_serialization_roundtrip() {
         let leaves = make_4_leaves();
         let tree = MerkleTree::build(&leaves);
-        let proof = tree.generate_proof(2).unwrap();
+        let proof = tree.generate_proof(2, &ZERO_HASH).unwrap();
 
         let bytes = proof.to_bytes();
         assert_eq!(bytes.len(), proof.byte_size());
@@ -254,7 +256,7 @@ mod tests {
     fn test_corrupted_proof_fails() {
         let leaves = make_4_leaves();
         let tree = MerkleTree::build(&leaves);
-        let mut proof = tree.generate_proof(2).unwrap();
+        let mut proof = tree.generate_proof(2, &ZERO_HASH).unwrap();
 
         // Corrupt a sibling hash
         proof.siblings[0].hash[0] ^= 0xFF;
@@ -266,6 +268,6 @@ mod tests {
     fn test_out_of_bounds() {
         let leaves = make_4_leaves();
         let tree = MerkleTree::build(&leaves);
-        assert!(tree.generate_proof(4).is_err());
+        assert!(tree.generate_proof(4, &ZERO_HASH).is_err());
     }
 }

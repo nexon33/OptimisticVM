@@ -46,6 +46,19 @@ pub fn sign_commitment(
     }
 }
 
+/// Verify that a commitment's chain_tip matches the given checkpoints.
+///
+/// This ensures the checkpoint ordering in the commitment is consistent
+/// with the provided sequence. Use during full verification when all
+/// checkpoints are available.
+pub fn verify_chain_tip(commitment: &Commitment, checkpoints: &[Hash]) -> bool {
+    let mut chain = HashChain::new();
+    for cp in checkpoints {
+        chain.append(cp);
+    }
+    chain.tip == commitment.chain_tip
+}
+
 /// Verify a SignedCommitment's Ed25519 signature.
 pub fn verify_signed_commitment(sc: &SignedCommitment) -> Result<()> {
     let message = sc.commitment.to_bytes();
@@ -154,5 +167,37 @@ mod tests {
 
         let decoded = SignedCommitment::from_bytes(&bytes).unwrap();
         assert!(verify_signed_commitment(&decoded).is_ok());
+    }
+
+    #[test]
+    fn test_verify_chain_tip_correct() {
+        let checkpoints: Vec<Hash> = (0..4u8).map(|i| hash_data(&[i])).collect();
+        let wasm_hash = hash_data(b"test_code");
+        let (commitment, _) = create_commitment(&checkpoints, &wasm_hash);
+
+        assert!(verify_chain_tip(&commitment, &checkpoints));
+    }
+
+    #[test]
+    fn test_verify_chain_tip_wrong_order() {
+        let checkpoints: Vec<Hash> = (0..4u8).map(|i| hash_data(&[i])).collect();
+        let wasm_hash = hash_data(b"test_code");
+        let (commitment, _) = create_commitment(&checkpoints, &wasm_hash);
+
+        // Reverse the checkpoints — chain_tip should NOT match
+        let mut reversed = checkpoints.clone();
+        reversed.reverse();
+        assert!(!verify_chain_tip(&commitment, &reversed));
+    }
+
+    #[test]
+    fn test_verify_chain_tip_tampered() {
+        let checkpoints: Vec<Hash> = (0..4u8).map(|i| hash_data(&[i])).collect();
+        let wasm_hash = hash_data(b"test_code");
+        let (mut commitment, _) = create_commitment(&checkpoints, &wasm_hash);
+
+        // Tamper with chain_tip
+        commitment.chain_tip[0] ^= 0xFF;
+        assert!(!verify_chain_tip(&commitment, &checkpoints));
     }
 }

@@ -78,14 +78,14 @@ fn test_happy_path_full_protocol() {
 
     // 5. Verify ALL Merkle proofs
     for i in 0..8u64 {
-        let proof = tree.generate_proof(i).unwrap();
+        let proof = tree.generate_proof(i, &wasm_hash).unwrap();
         assert!(verify_proof(&proof), "Merkle proof failed for index {i}");
         assert_eq!(proof.root, commitment.root);
     }
 
     // 6. Verify transition at each step
     for i in 0..8 {
-        let merkle_proof = tree.generate_proof(i as u64).unwrap();
+        let merkle_proof = tree.generate_proof(i as u64, &wasm_hash).unwrap();
         let prev = &states[i];
         let inp = &step_inputs[i];
         let next = &states[i + 1];
@@ -146,7 +146,7 @@ fn test_fraud_detection_and_bisection() {
     let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
 
     // 10. Fraud detected at step 5
-    let proof = tree.generate_proof(fraud_index as u64).unwrap();
+    let proof = tree.generate_proof(fraud_index as u64, &wasm_hash).unwrap();
     let result = generate_fraud_proof(
         &commitment,
         fraud_index as u64,
@@ -211,7 +211,7 @@ fn test_fraud_detection_and_bisection() {
             // Simplified step that just increments
             let val = u32::from_le_bytes(state[..4].try_into().unwrap());
             (val + 1).to_le_bytes().to_vec()
-        }))
+        }), None)
         .unwrap();
 
     // The dispute resolves (either party wins depending on exact narrowing)
@@ -230,7 +230,7 @@ fn test_corrupted_merkle_proof_rejected() {
     let wasm_hash = hash_data(b"test");
     let (_, tree) = create_commitment(&checkpoints, &wasm_hash);
 
-    let mut proof = tree.generate_proof(1).unwrap();
+    let mut proof = tree.generate_proof(1, &wasm_hash).unwrap();
     // Corrupt a sibling hash
     proof.siblings[0].hash[0] ^= 0xFF;
 
@@ -243,7 +243,7 @@ fn test_truncated_merkle_proof_rejected() {
     let wasm_hash = hash_data(b"test");
     let (_, tree) = create_commitment(&checkpoints, &wasm_hash);
 
-    let mut proof = tree.generate_proof(1).unwrap();
+    let mut proof = tree.generate_proof(1, &wasm_hash).unwrap();
     // Remove last sibling — proof is now incomplete
     proof.siblings.pop();
 
@@ -347,7 +347,7 @@ fn test_single_checkpoint_commitment() {
     assert_eq!(commitment.total_checkpoints, 1);
     assert_eq!(commitment.root, checkpoint); // single leaf IS the root
 
-    let proof = tree.generate_proof(0).unwrap();
+    let proof = tree.generate_proof(0, &wasm_hash).unwrap();
     assert!(verify_proof(&proof));
     assert_eq!(proof.siblings.len(), 0);
 }
@@ -359,14 +359,16 @@ fn test_fraud_proof_no_fraud_rejected() {
     let step_inputs: Vec<Vec<u8>> = vec![vec![1], vec![2]];
     let wasm_hash = hash_data(b"counter_step_v1");
 
-    // Use raw state hashes as leaves (not transition hashes)
-    // so that hash_data(step_fn(state, input)) matches the leaf
+    // Use transition hashes as leaves (consistent with protocol)
     let state_1 = counter_step(&initial_state, &step_inputs[0]);
     let state_2 = counter_step(&state_1, &step_inputs[1]);
-    let checkpoints = vec![hash_data(&state_1), hash_data(&state_2)];
+    let checkpoints = vec![
+        hash_transition(&hash_data(&initial_state), &hash_data(&step_inputs[0]), &hash_data(&state_1)),
+        hash_transition(&hash_data(&state_1), &hash_data(&step_inputs[1]), &hash_data(&state_2)),
+    ];
 
     let (commitment, tree) = create_commitment(&checkpoints, &wasm_hash);
-    let proof = tree.generate_proof(0).unwrap();
+    let proof = tree.generate_proof(0, &wasm_hash).unwrap();
 
     // Try to generate a fraud proof — should find NO fraud
     let result = generate_fraud_proof(
