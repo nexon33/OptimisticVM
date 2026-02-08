@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OVP Clicker - Anti-Cheat Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+  h1 { margin-top: 24px; font-size: 1.6rem; color: #e94560; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-top: 4px; }
+
+  .status-bar { margin-top: 16px; display: flex; gap: 12px; align-items: center; font-size: 0.8rem; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .status-dot.connected { background: #4ecca3; }
+  .status-dot.disconnected { background: #e94560; }
+  .status-dot.connecting { background: #f0a500; }
+
+  .gold-display { margin-top: 28px; text-align: center; }
+  .gold-amount { font-size: 3rem; font-weight: bold; color: #f0a500; }
+  .gold-label { font-size: 0.9rem; color: #aaa; }
+  .power-label { font-size: 0.85rem; color: #777; margin-top: 4px; }
+
+  .click-btn {
+    margin-top: 24px; width: 180px; height: 180px; border-radius: 50%;
+    border: 3px solid #e94560; background: #16213e; color: #e94560;
+    font-size: 1.4rem; font-weight: bold; cursor: pointer;
+    transition: transform 0.08s, background 0.1s;
+    user-select: none;
+  }
+  .click-btn:hover { background: #1a1a3e; }
+  .click-btn:active { transform: scale(0.95); background: #e94560; color: #fff; }
+  .click-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .upgrades { margin-top: 28px; display: flex; gap: 16px; }
+  .upgrade-btn {
+    padding: 14px 20px; border: 2px solid #4ecca3; border-radius: 8px;
+    background: #16213e; color: #4ecca3; cursor: pointer;
+    font-size: 0.9rem; text-align: center; min-width: 180px;
+    transition: background 0.1s;
+  }
+  .upgrade-btn:hover { background: #1a1a3e; }
+  .upgrade-btn:active { background: #4ecca3; color: #1a1a2e; }
+  .upgrade-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .upgrade-cost { font-size: 0.75rem; color: #888; margin-top: 4px; }
+  .upgrade-level { font-size: 0.7rem; color: #666; }
+
+  .log-section { margin-top: 28px; width: 460px; max-width: 95vw; }
+  .log-title { font-size: 0.85rem; color: #666; margin-bottom: 6px; }
+  .log-box {
+    height: 160px; overflow-y: auto; background: #0f0f23; border: 1px solid #333;
+    border-radius: 6px; padding: 8px; font-family: monospace; font-size: 0.75rem;
+    color: #4ecca3;
+  }
+  .log-box .error { color: #e94560; }
+  .log-box .warn { color: #f0a500; }
+
+  /* Kick overlay */
+  .kick-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(180, 20, 30, 0.97);
+    z-index: 1000; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center;
+  }
+  .kick-overlay.visible { display: flex; }
+  .kick-title { font-size: 2.4rem; font-weight: bold; color: #fff; margin-bottom: 12px; }
+  .kick-reason { font-size: 1rem; color: #ffd; max-width: 600px; margin-bottom: 20px; }
+  .kick-detail { font-size: 0.85rem; color: #fcc; max-width: 600px; margin-bottom: 20px; font-family: monospace; }
+  .proof-toggle {
+    background: none; border: 1px solid #fff; color: #fff; padding: 8px 16px;
+    border-radius: 4px; cursor: pointer; font-size: 0.85rem; margin-bottom: 12px;
+  }
+  .proof-panel {
+    display: none; background: rgba(0,0,0,0.5); border-radius: 8px; padding: 16px;
+    font-family: monospace; font-size: 0.7rem; color: #ddd; text-align: left;
+    max-width: 650px; max-height: 300px; overflow: auto; word-break: break-all;
+    margin-bottom: 20px;
+  }
+  .proof-panel.visible { display: block; }
+  .play-again-btn {
+    padding: 12px 32px; background: #fff; color: #b00; border: none; border-radius: 6px;
+    font-size: 1rem; font-weight: bold; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<h1>OVP Clicker</h1>
+<div class="subtitle">Anti-Cheat Demo &mdash; Optimistic Verification Protocol</div>
+
+<div class="status-bar">
+  <span class="status-dot connecting" id="statusDot"></span>
+  <span id="statusText">Connecting...</span>
+  <span style="margin-left: 12px; color: #555;" id="verifiedCount">Verified: 0</span>
+</div>
+
+<div class="gold-display">
+  <div class="gold-label">GOLD</div>
+  <div class="gold-amount" id="goldAmount">0</div>
+  <div class="power-label">Click Power: <span id="clickPower">1</span></div>
+</div>
+
+<button class="click-btn" id="clickBtn" disabled>CLICK</button>
+
+<div class="upgrades">
+  <button class="upgrade-btn" id="upgrade0" disabled>
+    Better Pickaxe<br><span class="upgrade-cost" id="cost0">Cost: 10 gold</span>
+    <div class="upgrade-level" id="level0">Level 0</div>
+  </button>
+  <button class="upgrade-btn" id="upgrade1" disabled>
+    Gold Rush<br><span class="upgrade-cost" id="cost1">Cost: 50 gold</span>
+    <div class="upgrade-level" id="level1">Level 0</div>
+  </button>
+</div>
+
+<div class="log-section">
+  <div class="log-title">Verification Log</div>
+  <div class="log-box" id="logBox"></div>
+</div>
+
+<!-- Kick overlay -->
+<div class="kick-overlay" id="kickOverlay">
+  <div class="kick-title">CHEATING DETECTED</div>
+  <div class="kick-reason" id="kickReason"></div>
+  <div class="kick-detail" id="kickDetail"></div>
+  <button class="proof-toggle" id="proofToggle">Show Cryptographic Proof</button>
+  <div class="proof-panel" id="proofPanel"></div>
+  <button class="play-again-btn" id="playAgainBtn">Play Again</button>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
