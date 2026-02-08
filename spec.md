@@ -381,14 +381,14 @@ hash_data(input: bytes) -> Hash:
 
 ### 4.2 hash_combine
 
-Combine two hashes into one. Used only for Merkle tree interior nodes.
+Combine two hashes into one with domain separation. Used only for Merkle tree interior nodes.
 
 ```
 hash_combine(left: Hash, right: Hash) -> Hash:
-  return SHA256(left || right)
+  return SHA256(0x03 || left || right)
 ```
 
-The input to SHA-256 is exactly 64 bytes: the 32-byte `left` hash concatenated with the 32-byte `right` hash.
+The input to SHA-256 is exactly 65 bytes: the 1-byte domain prefix `0x03` followed by the 32-byte `left` hash concatenated with the 32-byte `right` hash.
 
 ### 4.3 Domain-Separated Hash Functions
 
@@ -398,6 +398,7 @@ To prevent cross-context hash collisions, the following domain-separated variant
 DOMAIN_LEAF       = 0x00
 DOMAIN_TRANSITION = 0x01
 DOMAIN_CHAIN      = 0x02
+DOMAIN_INTERIOR   = 0x03
 ```
 
 **hash_leaf**: Hash a checkpoint's raw data with leaf domain separation.
@@ -425,7 +426,7 @@ hash_chain_step(tip: Hash, state_hash: Hash) -> Hash:
 
 The input to SHA-256 is exactly 65 bytes: 1 domain byte + two 32-byte hashes.
 
-`hash_combine` (Section 4.2) is used **only** for Merkle tree interior nodes and does NOT use a domain prefix. Tree structure inherently prevents collisions with other hash contexts.
+`hash_combine` (Section 4.2) is used **only** for Merkle tree interior nodes and uses the `0x03` domain prefix to prevent leaf/interior-node confusion attacks.
 
 ---
 
@@ -1257,11 +1258,11 @@ leaf_3 := hash_data([0x03]) = SHA256(0x03)
 Layer 0 (leaves):  [leaf_0, leaf_1, leaf_2, leaf_3]
 
 Layer 1:
-  node_0 := hash_combine(leaf_0, leaf_1) = SHA256(leaf_0 || leaf_1)
-  node_1 := hash_combine(leaf_2, leaf_3) = SHA256(leaf_2 || leaf_3)
+  node_0 := hash_combine(leaf_0, leaf_1) = SHA256(0x03 || leaf_0 || leaf_1)
+  node_1 := hash_combine(leaf_2, leaf_3) = SHA256(0x03 || leaf_2 || leaf_3)
 
 Layer 2 (root):
-  root := hash_combine(node_0, node_1) = SHA256(node_0 || node_1)
+  root := hash_combine(node_0, node_1) = SHA256(0x03 || node_0 || node_1)
 ```
 
 ### A.3 Hash Chain Construction
@@ -1309,8 +1310,8 @@ Proof for leaf_2 (index 2):
 
 Verification:
   current = leaf_2
-  Step 1: is_left=false → current = hash_combine(current, leaf_3) = node_1
-  Step 2: is_left=true  → current = hash_combine(node_0, current) = hash_combine(node_0, node_1) = root ✓
+  Step 1: is_left=false → current = hash_combine(current, leaf_3) = SHA256(0x03 || leaf_2 || leaf_3) = node_1
+  Step 2: is_left=true  → current = hash_combine(node_0, current) = SHA256(0x03 || node_0 || node_1) = root ✓
 ```
 
 ---
@@ -1339,11 +1340,11 @@ Output: 74f81fe167d99b4cb41d6d0ccda82278caee9f3e2f25d5e5a3936ff3dcec60d0
 
 ```
 Input:  left  = [0x00; 32], right = [0x00; 32]
-Output: SHA256([0x00; 64])
-      = f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b
+Output: SHA256(0x03 || [0x00; 64])
+      = dc48a742ae32cfd66352372d6120ed14d6629fc166246b05ff8b03e23804701f
 
 Input:  left  = [0x01; 32], right = [0x02; 32]
-Output: SHA256([0x01; 32] || [0x02; 32])
+Output: SHA256(0x03 || [0x01; 32] || [0x02; 32])
 ```
 
 ### B.3 Hash Chain

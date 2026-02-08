@@ -9,9 +9,11 @@ pub fn hash_data(input: &[u8]) -> Hash {
     hasher.finalize().into()
 }
 
-/// Combine two hashes: SHA-256(left || right). Used for Merkle interior nodes only.
+/// Domain-separated interior node hash: SHA-256(0x03 || left || right).
+/// Used for Merkle tree interior nodes only.
 pub fn hash_combine(left: &Hash, right: &Hash) -> Hash {
     let mut hasher = Sha256::new();
+    hasher.update([0x03]);
     hasher.update(left);
     hasher.update(right);
     hasher.finalize().into()
@@ -93,8 +95,9 @@ mod tests {
         let left = [0u8; 32];
         let right = [0u8; 32];
         let result = hash_combine(&left, &right);
+        // SHA256(0x03 || [0x00; 64])
         let expected =
-            hex::decode("f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b")
+            hex::decode("dc48a742ae32cfd66352372d6120ed14d6629fc166246b05ff8b03e23804701f")
                 .unwrap();
         assert_eq!(&result[..], &expected[..]);
     }
@@ -118,5 +121,22 @@ mod tests {
         let h1 = hash_data(&data);
         let h2 = hash_leaf(&data);
         assert_ne!(h1, h2, "hash_data and hash_leaf must differ for same input");
+    }
+
+    #[test]
+    fn test_domain_separation_combine_vs_data() {
+        // hash_combine uses 0x03 prefix, so SHA256(0x03 || left || right)
+        // must differ from SHA256(left || right) (which is hash_data on 64 bytes)
+        let left = [0x00u8; 32];
+        let right = [0x00u8; 32];
+        let combined = hash_combine(&left, &right);
+        let mut raw_input = [0u8; 64];
+        raw_input[..32].copy_from_slice(&left);
+        raw_input[32..].copy_from_slice(&right);
+        let raw = hash_data(&raw_input);
+        assert_ne!(
+            combined, raw,
+            "hash_combine must differ from hash_data on same 64-byte input"
+        );
     }
 }

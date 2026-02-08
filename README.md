@@ -140,7 +140,7 @@ All hash contexts use domain-separated prefixes to prevent cross-context collisi
 
 | Context | Prefix | Function | Input size |
 |---------|--------|----------|-----------|
-| Merkle interior nodes | (none) | `hash_combine(left, right)` | 64 bytes |
+| Merkle interior nodes | `0x03` | `hash_combine(left, right)` | 65 bytes |
 | Checkpoint leaves | `0x00` | `hash_leaf(data)` | 1 + len |
 | Transition binding | `0x01` | `hash_transition(prev, input, claimed)` | 97 bytes |
 | Hash chain links | `0x02` | `hash_chain_step(tip, state)` | 65 bytes |
@@ -148,7 +148,7 @@ All hash contexts use domain-separated prefixes to prevent cross-context collisi
 ## Testing
 
 ```sh
-cargo test          # 59 tests (46 unit + 13 integration)
+cargo test          # 60 tests (47 unit + 13 integration)
 cargo clippy        # 0 warnings
 ```
 
